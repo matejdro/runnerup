@@ -103,7 +103,8 @@ public class TrackerGPS extends DefaultTrackerComponent implements TickListener 
                         frequency_meters,
                         tracker);
                 mGpsStatus = new GpsStatus(context);
-                mGpsStatus.start(this);
+                mGpsStatus.setListener(this);
+                mGpsStatus.start();
                 mConnectCallback = callback;
                 return ResultCode.RESULT_PENDING;
             } else {
@@ -153,7 +154,7 @@ public class TrackerGPS extends DefaultTrackerComponent implements TickListener 
             }
 
             if (mGpsStatus != null) {
-                mGpsStatus.stop(this);
+                mGpsStatus.stop();
             }
             mGpsStatus = null;
             mConnectCallback = null;
@@ -204,7 +205,7 @@ public class TrackerGPS extends DefaultTrackerComponent implements TickListener 
         Callback tmp = mConnectCallback;
 
         mConnectCallback = null;
-        mGpsStatus.stop(this);
+        mGpsStatus.stop();
         //note: Don't reset mGpsStatus, it's used for isConnected()
 
         tmp.run(this, ResultCode.RESULT_OK);

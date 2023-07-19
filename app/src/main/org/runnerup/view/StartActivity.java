@@ -75,6 +75,7 @@ import org.runnerup.notification.GpsSearchingState;
 import org.runnerup.notification.NotificationManagerDisplayStrategy;
 import org.runnerup.notification.NotificationStateManager;
 import org.runnerup.tracker.GpsInformation;
+import org.runnerup.tracker.GpsStatus;
 import org.runnerup.tracker.Tracker;
 import org.runnerup.tracker.component.TrackerCadence;
 import org.runnerup.tracker.component.TrackerHRM;
@@ -99,7 +100,7 @@ import java.util.Locale;
 import java.util.Objects;
 
 public class StartActivity extends AppCompatActivity
-        implements TickListener, GpsInformation {
+        implements TickListener {
 
     private enum GpsLevel {POOR, ACCEPTABLE, GOOD}
 
@@ -111,7 +112,6 @@ public class StartActivity extends AppCompatActivity
 
     private boolean skipStopGps = false;
     private Tracker mTracker = null;
-    private org.runnerup.tracker.GpsStatus mGpsStatus = null;
 
     private TabHost tabHost = null;
     private View startButton = null;
@@ -159,8 +159,6 @@ public class StartActivity extends AppCompatActivity
     SQLiteDatabase mDB = null;
 
     Formatter formatter = null;
-    private NotificationStateManager notificationStateManager;
-    private GpsSearchingState gpsSearchingState;
     private GpsBoundState gpsBoundState;
     private boolean headsetRegistered = false;
     // Id to identify a permission request.
@@ -179,10 +177,7 @@ public class StartActivity extends AppCompatActivity
         formatter = new Formatter(this);
 
         bindGpsTracker();
-        mGpsStatus = new org.runnerup.tracker.GpsStatus(this);
         NotificationManager notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        notificationStateManager = new NotificationStateManager(new NotificationManagerDisplayStrategy(notificationManager));
-        gpsSearchingState = new GpsSearchingState(this, this);
         gpsBoundState = new GpsBoundState(this);
 
         LayoutInflater inflater = (LayoutInflater) getSystemService(Context.LAYOUT_INFLATER_SERVICE);
@@ -403,7 +398,6 @@ public class StartActivity extends AppCompatActivity
     public void onDestroy() {
         stopGps();
         unbindGpsTracker();
-        mGpsStatus = null;
         mTracker = null;
 
         DBHelper.closeDB(mDB);
@@ -411,7 +405,7 @@ public class StartActivity extends AppCompatActivity
     }
 
     public void onBackPressed() {
-        if (!getAutoStartGps() && mGpsStatus.isLogging()) {
+        if (!getAutoStartGps() && mTracker != null && mTracker.getGpsStatus().isLogging()) {
             stopGps();
             updateView();
         } else if (exit) {
@@ -504,18 +498,14 @@ public class StartActivity extends AppCompatActivity
 
     private void startGps() {
         Log.v(getClass().getName(), "StartActivity.startGps()");
-        if (!mGpsStatus.isEnabled()) {
+        if (mTracker == null || !mTracker.getGpsStatus().isEnabled()) {
             startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
         }
 
-        if (mGpsStatus != null && !mGpsStatus.isLogging())
-            mGpsStatus.start(this);
-
         if (mTracker != null) {
             mTracker.connect();
+            mTracker.getGpsStatus().setListener(this);
         }
-
-        notificationStateManager.displayNotificationState(gpsSearchingState);
     }
 
     private void stopGps() {
@@ -523,13 +513,9 @@ public class StartActivity extends AppCompatActivity
         if (skipStopGps)
             return;
 
-        if (mGpsStatus != null)
-            mGpsStatus.stop(this);
 
         if (mTracker != null)
             mTracker.reset();
-
-        notificationStateManager.cancelNotification();
     }
 
     private void notificationBatteryLevel(int batteryLevel) {
@@ -612,8 +598,6 @@ public class StartActivity extends AppCompatActivity
     }
 
     private void startWorkout() {
-        mGpsStatus.stop(StartActivity.this);
-
         // unregister receivers
         unregisterStartEventListener();
 
@@ -625,7 +609,6 @@ public class StartActivity extends AppCompatActivity
         Intent intent = new Intent(StartActivity.this,
                 RunActivity.class);
         StartActivity.this.startActivityForResult(intent, START_ACTIVITY);
-        notificationStateManager.cancelNotification(); // will be added by RunActivity
     }
 
     private final OnClickListener startButtonClick = v -> {
@@ -827,7 +810,13 @@ public class StartActivity extends AppCompatActivity
     }
 
     private void updateGPSView() {
-        if (!mGpsStatus.isEnabled() || !mGpsStatus.isLogging()) {
+        if (mTracker == null) {
+            return;
+        }
+
+        GpsStatus gpsStatus = mTracker.getGpsStatus();
+
+        if (!gpsStatus.isEnabled() || !gpsStatus.isLogging()) {
             startButton.setVisibility(View.GONE);
             gpsEnable.setVisibility(View.VISIBLE);
 
@@ -844,7 +833,7 @@ public class StartActivity extends AppCompatActivity
             gpsIndicator.setVisibility(View.GONE);
             gpsDetailIndicator.setVisibility(View.GONE);
 
-            if (!mGpsStatus.isLogging()) {
+            if (!gpsStatus.isLogging()) {
                 gpsEnable.setText(R.string.Start_GPS);
             } else {
                 gpsEnable.setText(R.string.Enable_GPS);
@@ -852,11 +841,11 @@ public class StartActivity extends AppCompatActivity
         } else {
             gpsDetailIndicator.setVisibility(View.VISIBLE);
 
-            int satFixedCount = mGpsStatus.getSatellitesFixed();
-            int satAvailCount = mGpsStatus.getSatellitesAvailable();
+            int satFixedCount = gpsStatus.getSatellitesFixed();
+            int satAvailCount = gpsStatus.getSatellitesAvailable();
 
             // gps accuracy
-            float accuracy = getGpsAccuracy();
+            float accuracy = mTracker.getGpsAccuracy();
 
             // gps details
             String gpsAccuracy = getGpsAccuracyString(accuracy);
@@ -865,7 +854,7 @@ public class StartActivity extends AppCompatActivity
                     : String.format(getString(R.string.GPS_status_accuracy), satFixedCount, satAvailCount, gpsAccuracy);
             gpsDetailMessage.setText(gpsDetail);
 
-            if (!mGpsStatus.isFixed()) {
+            if (!gpsStatus.isFixed()) {
                 startButton.setVisibility(View.GONE);
                 gpsEnable.setVisibility(View.GONE);
 
@@ -873,7 +862,7 @@ public class StartActivity extends AppCompatActivity
                 gpsDetailIndicator.setImageResource(R.drawable.ic_gps_0);
                 gpsMessage.setText(R.string.Waiting_for_GPS);
 
-                notificationStateManager.displayNotificationState(gpsSearchingState);
+                mTracker.onGpsStateUpdated();
             } else {
                 if (Objects.requireNonNull(tabHost.getCurrentTabTag()).contentEquals(TAB_ADVANCED) && advancedWorkout == null) {
                     startButton.setVisibility(View.GONE);
@@ -900,7 +889,7 @@ public class StartActivity extends AppCompatActivity
                         break;
                 }
 
-                notificationStateManager.displayNotificationState(gpsBoundState);
+                mTracker.onGpsStateUpdated();
             }
 
             if (statusDetailsShown) {
@@ -965,18 +954,6 @@ public class StartActivity extends AppCompatActivity
 
             return false;
         }
-    }
-
-    @Override
-    public float getGpsAccuracy() {
-        if (mTracker != null) {
-            Location l = mTracker.getLastKnownLocation();
-
-            if (l != null) {
-                return l.getAccuracy();
-            }
-        }
-        return -1;
     }
 
     public String getGpsAccuracyString(float accuracy) {
@@ -1184,16 +1161,6 @@ public class StartActivity extends AppCompatActivity
                     (dialog, which) -> dialog.dismiss())
                     .show();
         }
-    }
-
-    @Override
-    public int getSatellitesAvailable() {
-        return mGpsStatus.getSatellitesAvailable();
-    }
-
-    @Override
-    public int getSatellitesFixed() {
-        return mGpsStatus.getSatellitesFixed();
     }
 
     final class WorkoutStepsAdapter extends BaseAdapter {

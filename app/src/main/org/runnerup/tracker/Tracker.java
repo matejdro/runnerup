@@ -44,6 +44,7 @@ import org.runnerup.db.DBHelper;
 import org.runnerup.export.SyncManager;
 import org.runnerup.hr.HRProvider;
 import org.runnerup.notification.ForegroundNotificationDisplayStrategy;
+import org.runnerup.notification.GpsSearchingState;
 import org.runnerup.notification.NotificationState;
 import org.runnerup.notification.NotificationStateManager;
 import org.runnerup.notification.OngoingState;
@@ -81,8 +82,8 @@ import java.util.Objects;
 
 
 public class Tracker extends android.app.Service implements
-        LocationListener, Constants {
-    // Max age for current data to be considered valid
+        LocationListener, Constants,GpsInformation {
+// Max age for current data to be considered valid
     private static final int MAX_CURRENT_AGE = 15000;
     private static final long NANO_IN_MILLI = 1000000;
 
@@ -100,6 +101,8 @@ public class Tracker extends android.app.Service implements
     TrackerReceiver trackerReceiver = (TrackerReceiver) components.addComponent(new TrackerReceiver(this));
     private TrackerWear trackerWear; // created if version is sufficient
     private TrackerPebble trackerPebble; // created if version is sufficient
+
+    private org.runnerup.tracker.GpsStatus mGpsStatus = null;
 
     private boolean mBug23937Checked = false;
     private long mSystemToGpsDiffTimeNanos = 0;
@@ -132,12 +135,16 @@ public class Tracker extends android.app.Service implements
     private Workout workout = null;
     private NotificationStateManager notificationStateManager;
     private NotificationState activityOngoingState;
+    private GpsSearchingState gpsSearchingState;
+
 
     @Override
     public void onCreate() {
         mDB = DBHelper.getWritableDatabase(this);
         notificationStateManager = new NotificationStateManager(
                 new ForegroundNotificationDisplayStrategy(this));
+        mGpsStatus = new org.runnerup.tracker.GpsStatus(this);
+        gpsSearchingState = new GpsSearchingState(this, this);
 
         wakeLock(false);
 
@@ -164,6 +171,8 @@ public class Tracker extends android.app.Service implements
             DBHelper.closeDB(mDB);
             mDB = null;
         }
+
+        mGpsStatus = null;
 
         reset();
     }
@@ -281,12 +290,17 @@ public class Tracker extends android.app.Service implements
         }
 
         state.set(TrackerState.CONNECTING);
+        notificationStateManager.displayNotificationState(gpsSearchingState);
 
         wakeLock(true);
 
         SyncManager u = new SyncManager(getApplicationContext());
         u.loadLiveLoggers(liveLoggers);
         u.close();
+
+        if (!mGpsStatus.isLogging())
+            mGpsStatus.start();
+
 
         TrackerComponent.ResultCode result = components.onConnecting(onConnectCallback,
                 getApplicationContext());
@@ -372,6 +386,7 @@ public class Tracker extends android.app.Service implements
         setNextLocationType(DB.LOCATION.TYPE_START);
 
         state.set(TrackerState.STARTED);
+        mGpsStatus.stop();
 
         activityOngoingState = new OngoingState(new Formatter(this), workout, this);
 
@@ -443,6 +458,10 @@ public class Tracker extends android.app.Service implements
         notificationStateManager.displayNotificationState(activityOngoingState);
     }
 
+    public void onGpsStateUpdated() {
+        notificationStateManager.displayNotificationState(gpsSearchingState);
+    }
+
     public void stop() {
         switch (state.get()) {
             case INIT:
@@ -460,6 +479,7 @@ public class Tracker extends android.app.Service implements
         }
         state.set(TrackerState.STOPPED);
         setNextLocationType(DB.LOCATION.TYPE_PAUSE);
+        mGpsStatus.stop();
         // This saves a PAUSE location
         internalOnLocationChanged(mLastLocationStarted);
 
@@ -631,6 +651,10 @@ public class Tracker extends android.app.Service implements
 
     public long getActivityId() {
         return mActivityId;
+    }
+
+    public GpsStatus getGpsStatus() {
+        return mGpsStatus;
     }
 
     @Override
@@ -968,6 +992,26 @@ public class Tracker extends android.app.Service implements
             }
         }
         return mCurrentSpeed;
+    }
+
+    @Override
+    public float getGpsAccuracy() {
+        Location l = getLastKnownLocation();
+
+        if (l != null) {
+            return l.getAccuracy();
+        }
+        return -1;
+    }
+
+    @Override
+    public int getSatellitesAvailable() {
+        return mGpsStatus.getSatellitesAvailable();
+    }
+
+    @Override
+    public int getSatellitesFixed() {
+        return mGpsStatus.getSatellitesFixed();
     }
 
 

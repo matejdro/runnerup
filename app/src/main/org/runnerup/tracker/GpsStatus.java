@@ -81,7 +81,7 @@ public class GpsStatus implements LocationListener {
         mHistory = new Location[HIST_LEN];
     }
 
-    public void start(TickListener listener) {
+    public void start() {
         clear(true);
         this.listener = listener;
         if (ContextCompat.checkSelfPermission(this.context,
@@ -116,8 +116,7 @@ public class GpsStatus implements LocationListener {
         }
     }
 
-    public void stop(TickListener listener) {
-        this.listener = null;
+    public void stop() {
         if (locationManager != null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 locationManager.unregisterGnssStatusCallback(mGnssStatusCallback);
@@ -178,6 +177,10 @@ public class GpsStatus implements LocationListener {
             if (listener != null)
                 listener.onTick();
         }
+    }
+
+    public void setListener(TickListener listener) {
+        this.listener = listener;
     }
 
     // Android before N
